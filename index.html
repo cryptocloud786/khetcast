@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KhetCast: your field's weather, turned into today's work</title>
+  <meta name="description" content="Free, open-source field-action agent for Indian farmers: when to spray, whether to irrigate, frost/heat/disease alerts. Hindi + English, works offline.">
+  <meta name="theme-color" content="#1f5130">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img src="icon.svg" alt="" width="40" height="40">
+      <div>
+        <h1 id="title">KhetCast</h1>
+        <p id="tagline" class="tagline"></p>
+      </div>
+    </div>
+    <button id="lang" type="button" class="lang">हिंदी</button>
+  </header>
+
+  <main>
+    <form id="setup" class="card" autocomplete="off">
+      <label for="place" data-i18n="place">Village / town</label>
+      <div class="row">
+        <input id="place" type="text" data-i18n-ph="placeHint" placeholder="e.g. Karnal" required>
+        <button id="gps" type="button" class="ghost" data-i18n="useGps">Use my location</button>
+      </div>
+      <div id="placeList" class="placelist"></div>
+      <div class="grid">
+        <div><label for="crop" data-i18n="crop">Crop</label><select id="crop"></select></div>
+        <div><label for="stage" data-i18n="stage">Crop stage</label><select id="stage"></select></div>
+        <div><label for="soil" data-i18n="soil">Soil</label><select id="soil"></select></div>
+        <div><label for="lastIrr" data-i18n="lastIrrigation">Days since last irrigation</label><input id="lastIrr" type="number" min="0" max="60" value="10"></div>
+      </div>
+      <button id="go" type="submit" class="primary" data-i18n="planBtn">Plan my week</button>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </form>
+
+    <section id="result" hidden>
+      <div class="card">
+        <h2 id="placeName"></h2>
+        <small id="source" class="muted"></small>
+        <h3 data-i18n="today">Today</h3>
+        <ol id="actions" class="actions"></ol>
+        <div class="row tools">
+          <button id="speak" type="button" class="ghost" data-i18n="speak">Read aloud</button>
+          <a id="share" class="ghost btn" target="_blank" rel="noopener" data-i18n="share">Share on WhatsApp</a>
+          <button id="copy" type="button" class="ghost" data-i18n="copy">Copy</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 data-i18n="week">Next 7 days</h3>
+        <div class="tablewrap">
+          <table id="weekTable">
+            <thead><tr>
+              <th></th><th data-i18n="sprayCol">Spray window</th><th data-i18n="rainCol">Rain</th>
+              <th data-i18n="tempCol">Min / Max</th><th data-i18n="windCol">Max wind</th><th data-i18n="alertsCol">Alerts</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <form id="askForm" class="card">
+        <label for="askInput" data-i18n="ask">Ask a question</label>
+        <div class="row">
+          <input id="askInput" type="text" data-i18n-ph="askHint" placeholder="Can I spray tomorrow?">
+          <button id="askBtn" type="submit" class="primary small">→</button>
+        </div>
+        <p id="askAnswer" class="answer" aria-live="polite"></p>
+      </form>
+
+      <details class="card">
+        <summary data-i18n="trace">How the agent decided</summary>
+        <ol id="trace" class="trace"></ol>
+      </details>
+      <p id="disclaimer" class="muted small"></p>
+    </section>
+  </main>
+
+  <footer class="muted small">
+    Open source (MIT) · <a href="https://github.com/cryptocloud786/khetcast">GitHub</a> ·
+    Forecast data: <a href="https://open-meteo.com/">Open-Meteo</a> (CC BY 4.0), fallback <a href="https://api.met.no/">MET Norway</a> ·
+    Built with AgentFoundry for Code for a Billion 2026
+  </footer>
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>
