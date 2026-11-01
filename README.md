@@ -1,6 +1,6 @@
 # KhetCast 🌾: your field's weather, turned into today's work
 
-**Live app:** https://cryptocloud786.github.io/khetcast/ · **Track:** Agriculture · **Code for a Billion 2026** (Code for India) · **License:** MIT
+**Live app:** https://cryptocloud786.github.io/khetcast/ · **Demo video (2:15):** https://youtu.be/ueDsJylaiGU · **Track:** Agriculture · **Code for a Billion 2026** (Code for India) · **License:** MIT
 
 KhetCast is a free, open-source **field-action agent** for India's small and marginal farmers. A farmer gives a
 village name (or taps *Use my location*), a crop and its stage. The agent then pulls the hour-by-hour forecast for that
