@@ -1,0 +1,135 @@
+{
+  "spray": {
+    "kharif2025": {
+      "plans": 216,
+      "base": {
+        "fail": 108,
+        "wash": 86,
+        "drift": 47,
+        "failRate": 50
+      },
+      "agent": {
+        "sprays": 144,
+        "fail": 40,
+        "wash": 29,
+        "drift": 24,
+        "postponed": 72,
+        "movedToNextDay": 33,
+        "failRate": 27.8,
+        "failRateVsPlans": 18.5
+      },
+      "failedSpraysAvoided": 68,
+      "relativeReduction": 63
+    },
+    "rabi2025_26": {
+      "plans": 264,
+      "base": {
+        "fail": 17,
+        "wash": 5,
+        "drift": 13,
+        "failRate": 6.4
+      },
+      "agent": {
+        "sprays": 263,
+        "fail": 7,
+        "wash": 2,
+        "drift": 5,
+        "postponed": 1,
+        "movedToNextDay": 5,
+        "failRate": 2.7,
+        "failRateVsPlans": 2.7
+      },
+      "failedSpraysAvoided": 10,
+      "relativeReduction": 58.8
+    }
+  },
+  "irrigation": {
+    "wheat_rabi2025_26": {
+      "events": 60,
+      "baseWasted": 0,
+      "agentWasted": 0,
+      "agentHeld": 1,
+      "heldCorrect": 1,
+      "heldWrong": 0,
+      "perLocation": {
+        "bardhaman-wb": {
+          "baseWasted": 0,
+          "agentHeld": 0
+        },
+        "belagavi-ka": {
+          "baseWasted": 0,
+          "agentHeld": 0
+        },
+        "guntur-ap": {
+          "baseWasted": 0,
+          "agentHeld": 1
+        },
+        "hisar-hr": {
+          "baseWasted": 0,
+          "agentHeld": 0
+        },
+        "indore-mp": {
+          "baseWasted": 0,
+          "agentHeld": 0
+        },
+        "jaipur-rj": {
+          "baseWasted": 0,
+          "agentHeld": 0
+        },
+        "karnal-hr": {
+          "baseWasted": 0,
+          "agentHeld": 0
+        },
+        "ludhiana-pb": {
+          "baseWasted": 0,
+          "agentHeld": 0
+        },
+        "meerut-up": {
+          "baseWasted": 0,
+          "agentHeld": 0
+        },
+        "nashik-mh": {
+          "baseWasted": 0,
+          "agentHeld": 0
+        },
+        "patna-br": {
+          "baseWasted": 0,
+          "agentHeld": 0
+        },
+        "rajkot-gj": {
+          "baseWasted": 0,
+          "agentHeld": 0
+        }
+      },
+      "waterSavedMmPerAcreEvent": 50,
+      "litresSavedPerAcre": 0
+    }
+  },
+  "meta": {
+    "locations": [
+      "bardhaman-wb",
+      "belagavi-ka",
+      "guntur-ap",
+      "hisar-hr",
+      "indore-mp",
+      "jaipur-rj",
+      "karnal-hr",
+      "ludhiana-pb",
+      "meerut-up",
+      "nashik-mh",
+      "patna-br",
+      "rajkot-gj"
+    ],
+    "seasons": {
+      "kharif2025": [
+        "2025-06-15",
+        "2025-10-15"
+      ],
+      "rabi2025_26": [
+        "2025-11-01",
+        "2026-03-31"
+      ]
+    },
+    "generated": "2026-11-01T14:44:55.226Z"
+  }
+}
