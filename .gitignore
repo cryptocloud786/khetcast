@@ -1,0 +1,4 @@
+node_modules/
+.af_session.json
+af_runs.jsonl
+*.log

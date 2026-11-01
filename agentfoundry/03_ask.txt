@@ -1,0 +1,35 @@
+Write src/ask.js for KhetCast (field-action agent for Indian farmers). Output ONLY raw JavaScript ES module code, no fences, no prose. No dependencies; runs in browser and Node 20.
+
+It answers a farmer's free-text question from an already computed plan, in English, Hindi (Devanagari) or Hinglish (Hindi in Latin script). It must never invent numbers: every number comes from the plan.
+
+Imports: import { actionText, fmtDate, blockerText } from './i18n.js';
+
+EXPORT:
+1. export function parseQuestion(text) -> { intent, dayOffset, lang }
+   - lang: 'hi' if text contains Devanagari characters (U+0900–U+097F) or Hinglish words (kal, aaj, parso, kya, kab, karu, karun, sakta, chhidkav, chidkav, paani, pani, sinchai, barish, baarish, pala, buvai, bowai, khad, yuria), else 'en'.
+   - intent (first match wins, check lower-cased text):
+     'spray'  : spray, spraying, pesticide, dawai, dawa, chhidkav, chidkav, छिड़काव, छिडकाव, स्प्रे, दवा
+     'irrigate': irrigat, water the, watering, paani, pani, sinchai, सिंचाई, पानी
+     'urea'   : urea, fertili, khad, yuria, यूरिया, खाद
+     'frost'  : frost, cold, pala, thand, पाला, ठंड
+     'rain'   : rain, barish, baarish, बारिश, बरसात, mausam
+     'sow'    : sow, sowing, buvai, bowai, बुवाई, बोना, बोनी
+     'heat'   : heat, hot, garmi, गर्मी, लू
+     otherwise 'summary'
+   - dayOffset: 0 for today/aaj/आज, 1 for tomorrow/kal/कल, 2 for 'day after'/parso/परसों; weekday names in English (monday..sunday, mon..sun) and Hindi (सोमवार/सोम, मंगलवार/मंगल, बुधवार/बुध, गुरुवार/गुरु, शुक्रवार/शुक्र, शनिवार/शनि, रविवार/रवि) -> return { weekday: 0-6 (0=Sunday) } via a separate field `weekday` and dayOffset null. Default dayOffset 0 when nothing found. Note: in Hindi 'कल' is ambiguous; treat as tomorrow.
+
+2. export function answer(plan, text, langOverride) -> { lang, intent, date, text }
+   plan shape: { crop, stage, days: [{ date:'YYYY-MM-DD', summary:{tmin,tmax,rain,popMax,windMax,gustMax}, spray:{ best:{start,end,level,meanWind}|null, blockers:{reason:count} }, hazards:[{type,level,value,threshold,date}] }], irrigation:{decision,...}, fertilizer:{verdict}, sowing:{verdict,tmean5,reason}|null, actions:[...] }
+   - resolve target day: dayOffset index into plan.days (clamp to last); if weekday given, first day in plan.days whose UTC weekday (from Date.UTC of the date) matches.
+   - lang = langOverride || parsed lang.
+   - spray: if day.spray.best -> en: "Yes — on {fmtDate} spray between {start} and {end} (wind about {meanWind} km/h, no rain for 6 hours after)." + caution note if level==='caution'. hi equivalent. If no best: "Better not on {fmtDate}: {blockerText(top blocker)}." and suggest the next day in plan.days after it with a best window: " Next good window: {fmtDate} {start}–{end}."
+   - irrigate: use actionText({kind:'irrigation', type: plan.irrigation.decision, ...plan.irrigation}, lang) and return `${title}. ${why}` (irrigation is a whole-week decision; mention day's rain: " Rain on {fmtDate}: {rain} mm.").
+   - urea: if day rain + next day rain >= 20 -> hold message, else go message with the day's rain number.
+   - frost: day.summary.tmin; if a frost hazard exists that day use actionText for it; else "No frost expected on {date}: lowest {tmin}°C." (hi too)
+   - rain: "{date}: {rain} mm rain expected, chance up to {popMax}%." (popMax may be null -> omit chance)
+   - sow: if plan.sowing -> actionText({kind:'sowing', type: plan.sowing.verdict, ...plan.sowing}); else "Sowing advice is shown when you choose the Sowing stage." (hi too)
+   - heat: day.summary.tmax with heat hazard text if present.
+   - summary: top 2 plan.actions via actionText joined.
+   Return text as a single string.
+
+Keep it under 220 lines, well commented.

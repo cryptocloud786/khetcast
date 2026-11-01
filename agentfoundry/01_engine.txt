@@ -1,0 +1,53 @@
+You are writing production code for "KhetCast", an open-source field-action agent for India's small farmers (Code for a Billion hackathon, Agriculture track). Output ONLY one complete JavaScript file, no prose, no markdown fences. File: src/engine.js — a dependency-free ES module (export statements) that runs both in the browser and in Node 20 (node:test). Pure functions only, no fetch, no DOM.
+
+INPUT: normalized hourly rows (local time, Asia/Kolkata), array of objects:
+{ t: 'YYYY-MM-DDTHH:00', temp: °C, rh: %, rain: mm in that hour, pop: % or null, wind: km/h at 10 m, gust: km/h or null, et0: mm/h FAO reference ET or null, sm: volumetric soil moisture m3/m3 (3-9 cm) or null, isDay: 0/1 }
+
+EXPORT these:
+
+1. export const CROPS = { wheat, mustard, chickpea, potato, paddy, cotton, sugarcane, tomato } — each { id, stages: [{ id, kc }], sensitive: {...} }.
+   Use FAO-56 crop coefficients. Stages ids: 'sowing','vegetative','flowering','grain_fill'/'fruiting'/'tuber' as appropriate, 'maturity'. Example wheat: sowing 0.4, vegetative (crown root/tillering) 0.75, flowering 1.15, grain_fill 1.1, maturity 0.4. mustard: 0.35,0.8,1.05,1.0,0.35. chickpea: 0.4,0.7,1.0,0.9,0.35. potato: 0.5,0.8,1.15(tuber),0.75(maturity). paddy: 1.05,1.1,1.2,1.0,0.9. cotton: 0.35,0.7,1.15,1.0(boll),0.7. sugarcane: 0.4,0.8,1.25,0.75. tomato: 0.6,0.8,1.15(fruiting),0.8.
+   sensitive: { frostC: number|null (crop damaged at or below; wheat null, mustard 3, chickpea 2, potato 2, tomato 3, others null), heatC: number, heatStages: [stage ids], disease: 'yellow_rust'|'white_rust'|'late_blight'|'blast'|'bollworm'|null }.
+   wheat heatC 32 in ['flowering','grain_fill'] (terminal heat); mustard 32 flowering; chickpea 32 flowering; potato 30 tuber; paddy 35 flowering; cotton 38 flowering; sugarcane 40 []; tomato 35 flowering/fruiting.
+   Wheat disease yellow_rust, mustard white_rust, potato late_blight, paddy blast, tomato late_blight, others null.
+
+2. export function groupByDay(rows) -> [{ date:'YYYY-MM-DD', rows:[...] }] in order.
+
+3. export function daySummary(day) -> { date, tmin, tmax, tmean, rain (sum), popMax, windMax, gustMax, et0 (sum; if all null, estimate with Hargreaves: 0.0023*(tmean+17.8)*sqrt(max(tmax-tmin,0))*Ra where Ra=12 mm/day constant approximation for India in winter; document it), rhHours90 (count rh>=90), rhHours85 }.
+
+4. export function sprayWindows(rows, opts={}) — find spray windows. An hour h is GOOD when ALL: isDay===1; 3 <= wind <= 15; (gust==null || gust < 25); rain at h < 0.1; total rain over hours h..h+5 < 0.5 mm; max pop over h..h+5 < 40 (ignore if null); 10 <= temp <= 30; rh >= 40. CAUTION (usable but not ideal) when instead: wind between 1.5 and 3 (inversion/drift risk) or 15 < wind <= 19, or 30 < temp <= 32, or 30 <= rh < 40, with every rain/pop rule still satisfied. Everything else is BAD; give a reason code for the first failed rule among: 'night','rain_now','rain_soon','wind_high','wind_calm','hot','cold','dry_air'.
+   Return per day: [{ date, windows: [{ start:'HH:00', end:'HH:00' (exclusive end hour), hours, level:'go'|'caution', score }], best: window|null, blockers: { reasonCode: count of daylight hours } }]. Windows are runs of consecutive GOOD (level go) or GOOD+CAUTION (level caution if any caution hour) hours of length >= 2. Score = hours*10 - cautionHours*5 - meanWind. best = highest score, preferring 'go'.
+
+5. export function irrigationAdvice(rows, cropId, stageId, opts={ soil:'loam' }) — FAO-56 style checkbook for next 72 h and 7 days.
+   SOILS = { sandy:{fc:0.17,wp:0.07}, loam:{fc:0.30,wp:0.13}, clay:{fc:0.38,wp:0.22} } (export it). Root zone 0.6 m (paddy 0.3). TAW = (fc-wp)*1000*rootDepth mm. p = 0.5 (paddy 0.2). RAW = p*TAW.
+   Current depletion from first non-null sm: Dr = max(0,(fc - sm))*1000*rootDepth; if sm null use opts.lastIrrigationDays (default 10) * mean daily ETc as Dr estimate, flag 'estimated'.
+   ETc daily = et0_day*kc. Effective rain = 0.8*rain when rain>=5mm per day else 0.
+   rain72 = rain sum first 72 rows. etc7 = 7-day ETc sum.
+   Decision (first match): paddy: if rain72 >= 20 -> 'hold_rain', else if sm!=null && sm < fc-0.02 -> 'irrigate' (keep 5 cm standing water advice) else 'ok'.
+   others: rain72 >= 15 -> 'hold_rain'; Dr >= RAW -> 'irrigate'; Dr + (ETc next 3 days) - effRain3 >= RAW -> 'irrigate_soon' with day index when Dr crosses RAW; else 'ok' with daysUntil (simulate day by day up to 7, null if beyond).
+   Also stage-critical: wheat 'vegetative' (CRI) or 'flowering' -> critical:true.
+   Return { decision, depletionMm, rawMm, tawMm, rain72, etc7, kc, daysUntil, estimated, critical, waterSavedMm (if hold_rain: a typical 50 mm irrigation depth avoided, 75 for paddy) }.
+
+6. export function hazards(rows, cropId, stageId) -> array of { date, type, level:'caution'|'stop', value, threshold }:
+   - frost: tmin <= sensitive.frostC (stop) or <= frostC+2 (caution) when frostC != null. Also for any crop tmin <= 0 -> stop.
+   - heat: tmax >= heatC (stop) or >= heatC-2 (caution) when stage in heatStages.
+   - heavy_rain: daily rain >= 64.5 (IMD heavy) stop; >= 35 caution.
+   - strong_wind: gustMax >= 50 stop; >= 40 caution.
+   - disease (risk indicators, not diagnoses):
+     late_blight: Hutton/Smith period — two consecutive days each with tmin >= 10 and >= 6 hours rh>=90 (relaxed Hutton criteria) -> stop on second day; one such day -> caution.
+     yellow_rust: day with tmean between 10 and 20 and rhHours85 >= 8 -> caution; two consecutive such days -> stop.
+     white_rust: tmean 10-20 and rhHours90 >= 6 -> caution; two consecutive -> stop.
+     blast: tmin between 20 and 26 and rhHours90 >= 10 -> caution; two consecutive -> stop.
+     bollworm: null rule (return nothing).
+   Days in input order, each hazard at most once per day per type.
+
+7. export function sowingAdvice(rows, cropId) — only for wheat, mustard, chickpea, potato (others return null). Ideal mean temperature ranges over next 5 days: wheat 16-22 (too warm >25 -> 'wait'), mustard 18-25 (>28 wait), chickpea 18-26, potato 15-25. Also block if rain in next 48h >= 20 (waterlogging). Return { verdict: 'sow'|'wait'|'late'?, tmean5, reason }. Use 'sow' if within range, 'wait' if too warm or heavy rain, 'cold' if below range.
+
+8. export function fertilizerAdvice(rows) -> { verdict: 'go'|'hold', reason } — hold urea top-dressing if rain next 48h >= 20 mm (runoff/leaching) else go (advise irrigating lightly after urea if no rain).
+
+9. export function plan(rows, { crop, stage, soil='loam', lastIrrigationDays } ) — the agent's decision function. Returns
+   { crop, stage, generatedFrom: rows[0].t, days: [ { date, summary: daySummary, spray: day entry from sprayWindows, hazards: [...] } ], irrigation, sowing, fertilizer, today: { headline action list ordered by severity: hazards 'stop' first, then irrigation decision, then spray best window }, trace: [ { step, detail } ] }
+   trace records each reasoning step in English, e.g. {step:'observe', detail:'168 hourly rows, 7 days, rain total 12.3 mm'}, {step:'rule', detail:'spray: 41 good hours across 7 days; day 1 best 09:00-13:00'}, {step:'decide', detail:'irrigation: hold_rain (rain72 18.0 mm >= 15)'}.
+   Throw Error('no data') on empty rows. Ignore rows whose date is before the first full day? No: use all rows as given.
+
+Write clean, well-commented code (top-of-file comment block explaining every threshold and its agronomic source in one line each: FAO-56 Irrigation & Drainage Paper 56 for Kc/TAW/RAW, IMD rainfall categories, Hutton criteria for late blight, label all disease thresholds as risk indicators). Round numbers to 1 decimal in outputs. Do not use any library.

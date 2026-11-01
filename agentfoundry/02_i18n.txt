@@ -1,0 +1,39 @@
+Write src/i18n.js for "KhetCast", a field-action agent for Indian small farmers. Output ONLY raw JavaScript (ES module, no fences, no prose). No dependencies. Must run in browser and Node 20.
+
+Languages: 'en' (English) and 'hi' (Hindi, Devanagari, simple village-level Hindi a farmer in UP/Haryana/MP understands; use common words like छिड़काव (spray), सिंचाई (irrigation), पाला (frost), बारिश (rain), हवा (wind), बुवाई (sowing), यूरिया (urea), फसल (crop), खेत (field)). Write natural sentences, not word-by-word translations. Numbers stay as Western digits. Times as "07:00".
+
+EXPORT:
+1. export const LANGS = ['en','hi'];
+2. export const UI = { en: {...}, hi: {...} } with keys: title ('KhetCast'), tagline ('Your field's weather, turned into today's work' / Hindi equivalent), place ('Village / town'), placeHint ('e.g. Karnal, Nashik, Bardhaman'), useGps ('Use my location'), crop ('Crop'), stage ('Crop stage'), soil ('Soil'), lastIrrigation ('Days since last irrigation'), planBtn ('Plan my week'), today ('Today'), week ('Next 7 days'), why ('Why'), speak ('Read aloud'), share ('Share on WhatsApp'), copy ('Copy'), copied ('Copied'), trace ('How the agent decided'), ask ('Ask a question'), askHint ('e.g. Can I spray tomorrow? / कल छिड़काव कर सकते हैं?'), offline ('Offline: showing your last saved plan'), source ('Forecast'), disclaimer ('Advisory only. Disease alerts are weather-based risk indicators; confirm with your KVK or agriculture officer before spraying.'), loading ('Reading the forecast…'), noPlace ('Place not found'), sprayCol ('Spray window'), rainCol ('Rain'), tempCol ('Min / Max'), windCol ('Max wind'), alertsCol ('Alerts'), none ('—'), dataError ('Could not load the forecast. Check your connection and try again.').
+3. export const CROP_NAMES = { en:{wheat,mustard,chickpea,potato,paddy,cotton,sugarcane,tomato}, hi:{गेहूं, सरसों, चना, आलू, धान, कपास, गन्ना, टमाटर} }
+4. export const STAGE_NAMES = { en:{sowing:'Sowing',vegetative:'Growing (tillering / vegetative)',flowering:'Flowering',grain_fill:'Grain filling',fruiting:'Fruiting',tuber:'Tuber bulking',boll:'Boll formation',maturity:'Maturity / harvest'}, hi:{...} }
+5. export const SOIL_NAMES = { en:{sandy:'Sandy',loam:'Loam (domat)',clay:'Clay (heavy)'}, hi:{sandy:'रेतीली',loam:'दोमट',clay:'चिकनी (भारी)'} }
+6. export function fmtDate(dateStr, lang) -> short weekday + day, e.g. 'Mon 3 Nov' / 'सोम 3 नव॰' (implement with fixed arrays, not Intl, so output is deterministic; dateStr is 'YYYY-MM-DD', compute weekday with Date.UTC).
+7. export function actionText(action, lang) -> { title, why } strings. action objects (exact shapes):
+   - { kind:'hazard', type:'frost'|'heat'|'heavy_rain'|'strong_wind'|'late_blight'|'yellow_rust'|'white_rust'|'blast', level:'stop'|'caution', date, value, threshold }
+       titles e.g. frost: 'Frost risk on {date}: min {value}°C' ; why: 'Your crop is damaged near {threshold}°C. Give a light irrigation the evening before and avoid spraying that night.' (Hindi: पाला ... हल्की सिंचाई शाम को करें)
+       heat: 'Heat stress on {date}: max {value}°C' why: 'At this stage heat above {threshold}°C shrivels grain. Keep soil moist; irrigate lightly in the evening.'
+       heavy_rain: 'Heavy rain on {date}: {value} mm' why: 'Clear field drains now. Do not spray, irrigate or apply urea before it.'
+       strong_wind: 'Strong gusts on {date}: {value} km/h' why: 'Tall crop may lodge. Avoid irrigating just before; do not spray.'
+       late_blight: 'Late blight weather on {date}' why: 'Cool, very humid hours ({value} h at 90%+ humidity) favour late blight. Inspect leaves; if your KVK advises, use a protective spray in the next dry window.'
+       yellow_rust: 'Yellow rust weather on {date}' why: 'Cool humid days favour yellow rust. Check leaves for yellow stripes and report to KVK.'
+       white_rust: 'White rust weather on {date}' why similar for mustard.
+       blast: 'Blast weather on {date}' why: warm humid nights favour blast; avoid extra urea, inspect leaves.
+       Prefix title with '⚠️ ' when level==='stop' and '⚡ ' when caution? No emojis: instead return also no prefix; the UI shows colour.
+   - { kind:'irrigation', type:'irrigate'|'irrigate_soon'|'hold_rain'|'ok', depletionMm, rawMm, rain72, etc7, daysUntil, critical, waterSavedMm, estimated }
+       irrigate: title 'Irrigate now' why: 'Root zone has lost about {depletionMm} mm of water (limit {rawMm} mm) and little rain is coming.' + (critical? ' This is a critical stage — do not skip it.')
+       irrigate_soon: 'Irrigation due in about {daysUntil} day(s)'; why: 'Crop will use about {etc7} mm this week; soil reaches its limit in {daysUntil} day(s).'
+       hold_rain: 'Hold irrigation — rain is coming'; why: '{rain72} mm of rain expected in the next 3 days. Skipping saves about {waterSavedMm} mm of water and a pump run.'
+       ok: 'No irrigation needed now'; why: 'Soil moisture is enough for now; crop will use about {etc7} mm this week.'
+   - { kind:'spray', type:'window', level:'go'|'caution', date, start, end, hours, meanWind }
+       title 'Spray today {start}–{end}' why: 'Wind about {meanWind} km/h, no rain for 6 hours after spraying.' + (caution ? ' Conditions are borderline (light wind / warm / dry air); prefer the earlier hours.')
+   - { kind:'spray', type:'no_window', level:'stop', date, reason:'night'|'rain_now'|'rain_soon'|'wind_high'|'wind_calm'|'hot'|'cold'|'dry_air', next: null | { date, start, end } }
+       title 'Do not spray today' why by reason (rain_soon: 'Rain is expected within 6 hours — it would wash the spray off.' wind_high: 'Wind is too strong — spray will drift.' etc.) + (next ? ' Next good window: {fmtDate(next.date)} {next.start}–{next.end}.' : ' No good window in the next days.')
+   - { kind:'fertilizer', type:'go'|'hold' } go: title 'OK to top-dress urea' why 'No heavy rain in the next 2 days. Irrigate lightly after if the soil is dry.' hold: 'Hold urea' why 'Heavy rain within 2 days would wash it away.'
+   - { kind:'sowing', type:'sow'|'marginal'|'wait'|'cold', tmean5, reason } sow: 'Good days to sow' why 'Average temperature over 5 days {tmean5}°C is in the right range.'; marginal: 'You can sow, but it is warm' why '{tmean5}°C average; choose a heat-tolerant variety and ensure first irrigation on time.'; wait: reason too_warm -> 'Wait to sow — too warm' / heavy_rain -> 'Wait to sow — heavy rain due'; cold: 'Too cold for good germination'.
+   Use {date} formatted with fmtDate.
+8. export function blockerText(reason, lang) short phrase e.g. 'rain soon' / 'बारिश आने वाली'.
+9. export function shareText(plan, placeName, lang) -> plain text WhatsApp message: header line '🌾 KhetCast — {placeName}, {crop name} ({stage name})', then today's actions as bullet lines '• title — why' (max 4), then '7-day spray windows:' lines per day 'Mon 3 Nov: 07:00–11:00' or '—', then footer 'Free & open source: https://cryptocloud786.github.io/khetcast/'. plan has: crop, stage, actions (array as above), days: [{date, spray:{best:{start,end}|null}}].
+10. export function speechText(plan, placeName, lang) -> short spoken summary (top 3 actions: title then why) without symbols.
+
+Keep the file under 400 lines. Hindi must be correct and natural.

@@ -1,0 +1,440 @@
+You are writing production code for "KhetCast", an open-source field-action agent for India's small farmers (Code for a Billion hackathon, Agriculture track). Output ONLY one complete JavaScript file, no prose, no markdown fences. File: src/engine.js — a dependency-free ES module (export statements) that runs both in the browser and in Node 20 (node:test). Pure functions only, no fetch, no DOM.
+
+INPUT: normalized hourly rows (local time, Asia/Kolkata), array of objects:
+{ t: 'YYYY-MM-DDTHH:00', temp: °C, rh: %, rain: mm in that hour, pop: % or null, wind: km/h at 10 m, gust: km/h or null, et0: mm/h FAO reference ET or null, sm: volumetric soil moisture m3/m3 (3-9 cm) or null, isDay: 0/1 }
+
+EXPORT these:
+
+1. export const CROPS = { wheat, mustard, chickpea, potato, paddy, cotton, sugarcane, tomato } — each { id, stages: [{ id, kc }], sensitive: {...} }.
+   Use FAO-56 crop coefficients. Stages ids: 'sowing','vegetative','flowering','grain_fill'/'fruiting'/'tuber' as appropriate, 'maturity'. Example wheat: sowing 0.4, vegetative (crown root/tillering) 0.75, flowering 1.15, grain_fill 1.1, maturity 0.4. mustard: 0.35,0.8,1.05,1.0,0.35. chickpea: 0.4,0.7,1.0,0.9,0.35. potato: 0.5,0.8,1.15(tuber),0.75(maturity). paddy: 1.05,1.1,1.2,1.0,0.9. cotton: 0.35,0.7,1.15,1.0(boll),0.7. sugarcane: 0.4,0.8,1.25,0.75. tomato: 0.6,0.8,1.15(fruiting),0.8.
+   sensitive: { frostC: number|null (crop damaged at or below; wheat null, mustard 3, chickpea 2, potato 2, tomato 3, others null), heatC: number, heatStages: [stage ids], disease: 'yellow_rust'|'white_rust'|'late_blight'|'blast'|'bollworm'|null }.
+   wheat heatC 32 in ['flowering','grain_fill'] (terminal heat); mustard 32 flowering; chickpea 32 flowering; potato 30 tuber; paddy 35 flowering; cotton 38 flowering; sugarcane 40 []; tomato 35 flowering/fruiting.
+   Wheat disease yellow_rust, mustard white_rust, potato late_blight, paddy blast, tomato late_blight, others null.
+
+2. export function groupByDay(rows) -> [{ date:'YYYY-MM-DD', rows:[...] }] in order.
+
+3. export function daySummary(day) -> { date, tmin, tmax, tmean, rain (sum), popMax, windMax, gustMax, et0 (sum; if all null, estimate with Hargreaves: 0.0023*(tmean+17.8)*sqrt(max(tmax-tmin,0))*Ra where Ra=12 mm/day constant approximation for India in winter; document it), rhHours90 (count rh>=90), rhHours85 }.
+
+4. export function sprayWindows(rows, opts={}) — find spray windows. An hour h is GOOD when ALL: isDay===1; 3 <= wind <= 15; (gust==null || gust < 25); rain at h < 0.1; total rain over hours h..h+5 < 0.5 mm; max pop over h..h+5 < 40 (ignore if null); 10 <= temp <= 30; rh >= 40. CAUTION (usable but not ideal) when instead: wind between 1.5 and 3 (inversion/drift risk) or 15 < wind <= 19, or 30 < temp <= 32, or 30 <= rh < 40, with every rain/pop rule still satisfied. Everything else is BAD; give a reason code for the first failed rule among: 'night','rain_now','rain_soon','wind_high','wind_calm','hot','cold','dry_air'.
+   Return per day: [{ date, windows: [{ start:'HH:00', end:'HH:00' (exclusive end hour), hours, level:'go'|'caution', score }], best: window|null, blockers: { reasonCode: count of daylight hours } }]. Windows are runs of consecutive GOOD (level go) or GOOD+CAUTION (level caution if any caution hour) hours of length >= 2. Score = hours*10 - cautionHours*5 - meanWind. best = highest score, preferring 'go'.
+
+5. export function irrigationAdvice(rows, cropId, stageId, opts={ soil:'loam' }) — FAO-56 style checkbook for next 72 h and 7 days.
+   SOILS = { sandy:{fc:0.17,wp:0.07}, loam:{fc:0.30,wp:0.13}, clay:{fc:0.38,wp:0.22} } (export it). Root zone 0.6 m (paddy 0.3). TAW = (fc-wp)*1000*rootDepth mm. p = 0.5 (paddy 0.2). RAW = p*TAW.
+   Current depletion from first non-null sm: Dr = max(0,(fc - sm))*1000*rootDepth; if sm null use opts.lastIrrigationDays (default 10) * mean daily ETc as Dr estimate, flag 'estimated'.
+   ETc daily = et0_day*kc. Effective rain = 0.8*rain when rain>=5mm per day else 0.
+   rain72 = rain sum first 72 rows. etc7 = 7-day ETc sum.
+   Decision (first match): paddy: if rain72 >= 20 -> 'hold_rain', else if sm!=null && sm < fc-0.02 -> 'irrigate' (keep 5 cm standing water advice) else 'ok'.
+   others: rain72 >= 15 -> 'hold_rain'; Dr >= RAW -> 'irrigate'; Dr + (ETc next 3 days) - effRain3 >= RAW -> 'irrigate_soon' with day index when Dr crosses RAW; else 'ok' with daysUntil (simulate day by day up to 7, null if beyond).
+   Also stage-critical: wheat 'vegetative' (CRI) or 'flowering' -> critical:true.
+   Return { decision, depletionMm, rawMm, tawMm, rain72, etc7, kc, daysUntil, estimated, critical, waterSavedMm (if hold_rain: a typical 50 mm irrigation depth avoided, 75 for paddy) }.
+
+6. export function hazards(rows, cropId, stageId) -> array of { date, type, level:'caution'|'stop', value, threshold }:
+   - frost: tmin <= sensitive.frostC (stop) or <= frostC+2 (caution) when frostC != null. Also for any crop tmin <= 0 -> stop.
+   - heat: tmax >= heatC (stop) or >= heatC-2 (caution) when stage in heatStages.
+   - heavy_rain: daily rain >= 64.5 (IMD heavy) stop; >= 35 caution.
+   - strong_wind: gustMax >= 50 stop; >= 40 caution.
+   - disease (risk indicators, not diagnoses):
+     late_blight: Hutton/Smith period — two consecutive days each with tmin >= 10 and >= 6 hours rh>=90 (relaxed Hutton criteria) -> stop on second day; one such day -> caution.
+     yellow_rust: day with tmean between 10 and 20 and rhHours85 >= 8 -> caution; two consecutive such days -> stop.
+     white_rust: tmean 10-20 and rhHours90 >= 6 -> caution; two consecutive -> stop.
+     blast: tmin between 20 and 26 and rhHours90 >= 10 -> caution; two consecutive -> stop.
+     bollworm: null rule (return nothing).
+   Days in input order, each hazard at most once per day per type.
+
+7. export function sowingAdvice(rows, cropId) — only for wheat, mustard, chickpea, potato (others return null). Ideal mean temperature ranges over next 5 days: wheat 16-22 (too warm >25 -> 'wait'), mustard 18-25 (>28 wait), chickpea 18-26, potato 15-25. Also block if rain in next 48h >= 20 (waterlogging). Return { verdict: 'sow'|'wait'|'late'?, tmean5, reason }. Use 'sow' if within range, 'wait' if too warm or heavy rain, 'cold' if below range.
+
+8. export function fertilizerAdvice(rows) -> { verdict: 'go'|'hold', reason } — hold urea top-dressing if rain next 48h >= 20 mm (runoff/leaching) else go (advise irrigating lightly after urea if no rain).
+
+9. export function plan(rows, { crop, stage, soil='loam', lastIrrigationDays } ) — the agent's decision function. Returns
+   { crop, stage, generatedFrom: rows[0].t, days: [ { date, summary: daySummary, spray: day entry from sprayWindows, hazards: [...] } ], irrigation, sowing, fertilizer, today: { headline action list ordered by severity: hazards 'stop' first, then irrigation decision, then spray best window }, trace: [ { step, detail } ] }
+   trace records each reasoning step in English, e.g. {step:'observe', detail:'168 hourly rows, 7 days, rain total 12.3 mm'}, {step:'rule', detail:'spray: 41 good hours across 7 days; day 1 best 09:00-13:00'}, {step:'decide', detail:'irrigation: hold_rain (rain72 18.0 mm >= 15)'}.
+   Throw Error('no data') on empty rows. Ignore rows whose date is before the first full day? No: use all rows as given.
+
+Write clean, well-commented code (top-of-file comment block explaining every threshold and its agronomic source in one line each: FAO-56 Irrigation & Drainage Paper 56 for Kc/TAW/RAW, IMD rainfall categories, Hutton criteria for late blight, label all disease thresholds as risk indicators). Round numbers to 1 decimal in outputs. Do not use any library.
+
+
+---
+A first part of src/engine.js is ALREADY WRITTEN (below). It defines: CROPS, SOILS, groupByDay, daySummary, sprayWindows.
+Output ONLY the remaining code that comes after it (the remaining exported functions from the spec, plus any helpers they need that are not defined yet), as raw JavaScript, no fences, no repetition of existing code. Reuse existing helpers by name.
+
+EXISTING CODE:
+/*
+Engine for KhetCast (field-action agent)
+Sources & thresholds (one-line each):
+- FAO-56: crop coefficients (Kc), root-zone depletion, TAW/RAW, and irrigation scheduling guidance.
+- IMD rainfall: heavy rain thresholds used (35 mm/day caution; 64.5 mm/day heavy/very heavy).
+- Hutton/Smith (relaxed) for late blight: tmin >=10 and >=6 hours RH>=90 as risk indicator (two consecutive -> high).
+- Hargreaves approximation used when ET0 missing: ET0 = 0.0023*(Tmean+17.8)*sqrt(Tmax-Tmin)*Ra (Ra ~ 12 mm/day used here).
+- Spray windows: operational thresholds for wind, gust, rain, POP, temperature, RH common in IPM/spray guidance.
+All numeric outputs rounded to 1 decimal.
+*/
+
+export const CROPS = {
+  wheat: {
+    id: 'wheat',
+    stages: [
+      { id: 'sowing', kc: 0.4 },
+      { id: 'vegetative', kc: 0.75 },
+      { id: 'flowering', kc: 1.15 },
+      { id: 'grain_fill', kc: 1.1 },
+      { id: 'maturity', kc: 0.4 }
+    ],
+    sensitive: {
+      frostC: null,
+      heatC: 32,
+      heatStages: ['flowering','grain_fill'],
+      disease: 'yellow_rust'
+    }
+  },
+  mustard: {
+    id: 'mustard',
+    stages: [
+      { id: 'sowing', kc: 0.35 },
+      { id: 'vegetative', kc: 0.8 },
+      { id: 'flowering', kc: 1.05 },
+      { id: 'grain_fill', kc: 1.0 },
+      { id: 'maturity', kc: 0.35 }
+    ],
+    sensitive: {
+      frostC: 3,
+      heatC: 32,
+      heatStages: ['flowering'],
+      disease: 'white_rust'
+    }
+  },
+  chickpea: {
+    id: 'chickpea',
+    stages: [
+      { id: 'sowing', kc: 0.4 },
+      { id: 'vegetative', kc: 0.7 },
+      { id: 'flowering', kc: 1.0 },
+      { id: 'grain_fill', kc: 0.9 },
+      { id: 'maturity', kc: 0.35 }
+    ],
+    sensitive: {
+      frostC: 2,
+      heatC: 32,
+      heatStages: ['flowering'],
+      disease: null
+    }
+  },
+  potato: {
+    id: 'potato',
+    stages: [
+      { id: 'sowing', kc: 0.5 },
+      { id: 'vegetative', kc: 0.8 },
+      { id: 'tuber', kc: 1.15 },
+      { id: 'maturity', kc: 0.75 }
+    ],
+    sensitive: {
+      frostC: 2,
+      heatC: 30,
+      heatStages: ['tuber'],
+      disease: 'late_blight'
+    }
+  },
+  paddy: {
+    id: 'paddy',
+    stages: [
+      { id: 'sowing', kc: 1.05 },
+      { id: 'vegetative', kc: 1.1 },
+      { id: 'flowering', kc: 1.2 },
+      { id: 'grain_fill', kc: 1.0 },
+      { id: 'maturity', kc: 0.9 }
+    ],
+    sensitive: {
+      frostC: null,
+      heatC: 35,
+      heatStages: ['flowering'],
+      disease: 'blast'
+    }
+  },
+  cotton: {
+    id: 'cotton',
+    stages: [
+      { id: 'sowing', kc: 0.35 },
+      { id: 'vegetative', kc: 0.7 },
+      { id: 'flowering', kc: 1.15 },
+      { id: 'boll', kc: 1.0 },
+      { id: 'maturity', kc: 0.7 }
+    ],
+    sensitive: {
+      frostC: null,
+      heatC: 38,
+      heatStages: ['flowering'],
+      disease: 'bollworm'
+    }
+  },
+  sugarcane: {
+    id: 'sugarcane',
+    stages: [
+      { id: 'sowing', kc: 0.4 },
+      { id: 'vegetative', kc: 0.8 },
+      { id: 'flowering', kc: 1.25 },
+      { id: 'maturity', kc: 0.75 }
+    ],
+    sensitive: {
+      frostC: null,
+      heatC: 40,
+      heatStages: [],
+      disease: null
+    }
+  },
+  tomato: {
+    id: 'tomato',
+    stages: [
+      { id: 'sowing', kc: 0.6 },
+      { id: 'vegetative', kc: 0.8 },
+      { id: 'fruiting', kc: 1.15 },
+      { id: 'maturity', kc: 0.8 }
+    ],
+    sensitive: {
+      frostC: 3,
+      heatC: 35,
+      heatStages: ['flowering','fruiting'],
+      disease: 'late_blight'
+    }
+  }
+};
+
+export const SOILS = {
+  sandy: { fc: 0.17, wp: 0.07 },
+  loam: { fc: 0.30, wp: 0.13 },
+  clay: { fc: 0.38, wp: 0.22 }
+};
+
+// Helper utilities
+const round1 = (v) => (v == null ? null : Math.round(v * 10) / 10);
+const sum = (arr) => arr.reduce((a,b)=>a+(b||0),0);
+const mean = (arr) => arr.length ? sum(arr)/arr.length : null;
+const take = (arr, n) => arr.slice(0,n);
+
+// Parse date strings
+const dateOf = (t) => t.slice(0,10);
+const hourOf = (t) => parseInt(t.slice(11,13),10);
+
+// Group rows by local date (YYYY-MM-DD)
+export function groupByDay(rows) {
+  const groups = [];
+  for (let r of rows) {
+    const d = dateOf(r.t);
+    if (!groups.length || groups[groups.length-1].date !== d) {
+      groups.push({ date: d, rows: [r] });
+    } else {
+      groups[groups.length-1].rows.push(r);
+    }
+  }
+  return groups;
+}
+
+// Day summary: expects {date, rows}
+export function daySummary(day) {
+  const rows = day.rows || [];
+  if (!rows.length) {
+    return {
+      date: day.date,
+      tmin: null, tmax: null, tmean: null,
+      rain: 0, popMax: null, windMax: null, gustMax: null,
+      et0: null, rhHours90: 0, rhHours85: 0
+    };
+  }
+  const temps = rows.map(r=>r.temp).filter(v=>v!=null);
+  const tmin = Math.min(...temps);
+  const tmax = Math.max(...temps);
+  const tmean = mean(temps);
+  const rain = sum(rows.map(r=>r.rain||0));
+  const popVals = rows.map(r=>r.pop).filter(v=>v!=null);
+  const popMax = popVals.length ? Math.max(...popVals) : null;
+  const windMax = rows.map(r=>r.wind||0).reduce((a,b)=>Math.max(a,b),0);
+  const gustVals = rows.map(r=>r.gust).filter(v=>v!=null);
+  const gustMax = gustVals.length ? Math.max(...gustVals) : null;
+  const et0vals = rows.map(r=>r.et0).filter(v=>v!=null);
+  let et0sum = null;
+  if (et0vals.length === rows.length && et0vals.length>0) {
+    et0sum = sum(et0vals);
+  } else if (et0vals.length>0 && et0vals.length<rows.length) {
+    // partial data: sum known and estimate missing hourly as proportion of daily Hargreaves
+    const harg = hargreavesDay(tmean, tmax, tmin);
+    et0sum = sum(et0vals);
+    const missing = rows.length - et0vals.length;
+    // distribute remaining as (harg * missing / rows.length)
+    et0sum += harg * (missing/rows.length);
+  } else {
+    // all null -> estimate with Hargreaves
+    et0sum = hargreavesDay(tmean, tmax, tmin);
+  }
+  const rhHours90 = rows.filter(r=>r.rh>=90).length;
+  const rhHours85 = rows.filter(r=>r.rh>=85).length;
+  return {
+    date: day.date,
+    tmin: round1(tmin),
+    tmax: round1(tmax),
+    tmean: round1(tmean),
+    rain: round1(rain),
+    popMax: popMax == null ? null : round1(popMax),
+    windMax: round1(windMax),
+    gustMax: gustMax == null ? null : round1(gustMax),
+    et0: round1(et0sum),
+    rhHours90,
+    rhHours85
+  };
+}
+
+// Hargreaves daily estimate using Ra=12 mm/day approx
+function hargreavesDay(tmean, tmax, tmin) {
+  const Ra = 12;
+  if (tmean == null || tmax == null || tmin == null) return 0;
+  const dt = Math.max(tmax - tmin, 0);
+  const val = 0.0023 * (tmean + 17.8) * Math.sqrt(dt) * Ra;
+  return val;
+}
+
+// Spray windows: rows array and options unused now
+export function sprayWindows(rows, opts={}) {
+  // Precompute
+  const N = rows.length;
+  const meta = rows.map((r,i) => {
+    // Look ahead 6 hours h..h+5
+    const window = rows.slice(i, i+6);
+    const rainNow = (r.rain||0);
+    const rainAhead = sum(window.map(x=>x.rain||0));
+    const popVals = window.map(x=>x.pop).filter(v=>v!=null);
+    const popMax = popVals.length ? Math.max(...popVals) : null;
+    const gustNow = r.gust;
+    // Primary GOOD criteria
+    let good = true;
+    let reason = null;
+    // isDay
+    if (r.isDay !== 1) { good = false; reason = 'night'; }
+    // rain now
+    if (good && rainNow >= 0.1) { good = false; reason = 'rain_now'; }
+    // rain soon
+    if (good && rainAhead >= 0.5) { good = false; reason = 'rain_soon'; }
+    // pop soon
+    if (good && popMax != null && popMax >= 40) { good = false; reason = 'rain_soon'; }
+    // gust
+    if (good && gustNow != null && gustNow >= 25) { good = false; reason = 'wind_high'; }
+    // wind
+    if (good && (r.wind == null || r.wind > 15)) { good = false; reason = 'wind_high'; }
+    if (good && r.wind < 3) { good = false; reason = 'wind_calm'; }
+    // temp
+    if (good && r.temp > 30) { good = false; reason = 'hot'; }
+    if (good && r.temp < 10) { good = false; reason = 'cold'; }
+    // rh
+    if (good && r.rh < 40) { good = false; reason = 'dry_air'; }
+
+    // Determine caution conditions (only if not bad)
+    let caution = false;
+    if (good) {
+      // wind between 1.5 and 3 OR 15 < wind <= 19 OR temp 30-32 OR 30<=rh<40
+      if ((r.wind != null && r.wind >= 1.5 && r.wind < 3) ||
+          (r.wind != null && r.wind > 15 && r.wind <= 19) ||
+          (r.temp > 30 && r.temp <= 32) ||
+          (r.rh >= 30 && r.rh < 40)) {
+        caution = true;
+      }
+    }
+    return {
+      index: i,
+      t: r.t,
+      date: dateOf(r.t),
+      hour: hourOf(r.t),
+      isDay: r.isDay,
+      wind: r.wind || 0,
+      temp: r.temp,
+      rh: r.rh,
+      rainNow,
+      rainAhead,
+      popMax,
+      good,
+      caution,
+      bad: !good,
+      reason
+    };
+  });
+
+  // Group by day
+  const days = groupByDay(rows);
+  const result = [];
+  for (let d of days) {
+    const dayMeta = meta.filter(m=>m.date===d.date);
+    // Build blockers: count of daylight hours by reason
+    const blockers = {};
+    for (let m of dayMeta) {
+      if (m.isDay===1 && m.bad) {
+        blockers[m.reason] = (blockers[m.reason]||0)+1;
+      }
+    }
+    // Build windows: runs of consecutive hours where not bad (good or caution)
+    const windows = [];
+    let run = null;
+    for (let i=0;i<dayMeta.length;i++) {
+      const m = dayMeta[i];
+      if (m.isDay !== 1) {
+        // treat as break
+        if (run) { // finalize
+          if (run.hours.length >= 2) windows.push(run);
+          run = null;
+        }
+        continue;
+      }
+      if (!m.bad) {
+        if (!run) {
+          run = { startIdx: i, hours: [m], cautionHours: m.caution?1:0 };
+        } else {
+          run.hours.push(m);
+          if (m.caution) run.cautionHours++;
+        }
+      } else {
+        // finalize existing run
+        if (run) {
+          if (run.hours.length >= 2) windows.push(run);
+          run = null;
+        }
+      }
+    }
+    if (run) {
+      if (run.hours.length >= 2) windows.push(run);
+      run = null;
+    }
+
+    // Map windows to required shape
+    const mapped = windows.map(w => {
+      const startHour = w.hours[0].hour;
+      const endHour = w.hours[w.hours.length-1].hour + 1; // exclusive
+      const hours = w.hours.length;
+      const cautionHours = w.cautionHours;
+      const meanWind = mean(w.hours.map(h=>h.wind)) || 0;
+      const level = cautionHours>0 ? 'caution' : 'go';
+      const score = round1(hours*10 - cautionHours*5 - meanWind);
+      return {
+        start: String(startHour).padStart(2,'0') + ':00',
+        end: String(endHour).padStart(2,'0') + ':00',
+        hours,
+        level,
+        cautionHours,
+        meanWind: round1(meanWind),
+        score
+      };
+    });
+
+    // Select best window: highest score preferring 'go' over 'caution'
+    let best = null;
+    for (let w of mapped) {
+      if (!best) { best = w; continue; }
+      if (w.score > best.score) best = w;
+      else if (w.score === best.score) {
+        if (best.level === 'caution' && w.level === 'go') best = w;
+      }
+    }
+    result.push({
+      date: d.date,
+      windows: mapped,
+      best: best || null,
+      blockers
+    });
+  }
+  return result;
+}
+
+// irrigationAdvice
